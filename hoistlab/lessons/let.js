@@ -15,7 +15,7 @@ module.exports=function(){
         errors.redeclaration=e.message;
     }
     try{
-        eval;('z;let z=5;')
+        eval('z;let z=5;')
     }catch(e){
         errors.tdzAccess=e.message;
     }
