@@ -1,4 +1,5 @@
 const dns = require('dns').promises;
+const net = require('net');
 
 function parseInput(input) {
     try {
@@ -15,8 +16,7 @@ function parseInput(input) {
             path: url.pathname || '/'
         };
     } catch (err) {
-        console.error("Invalid URL");
-        process.exit(1);
+        throw new Error("Invalid URL");
     }
 }
 
@@ -37,14 +37,67 @@ async function resolveDns(host) {
     };
 }
 
+function tcpConnect(ip, port, timeout = 5000) {
+    return new Promise((resolve, reject) => {
+        const start = process.hrtime.bigint();
+
+        const socket = net.createConnection({ host: ip, port });
+
+        const timer = setTimeout(() => {
+            socket.destroy();
+            reject(new Error('TCP timeout'));
+        }, timeout);
+
+        socket.on('connect', () => {
+            clearTimeout(timer);
+            const end = process.hrtime.bigint();
+
+            resolve({
+                ip,
+                time: Number(end - start) / 1e6
+            });
+
+            socket.end();
+        });
+
+        socket.on('error', (err) => {
+            clearTimeout(timer);
+            reject(new Error(`TCP error (${ip}): ${err.message}`));
+        });
+    });
+}
+
 const input = process.argv[2];
-const parsed = parseInput(input);
 
 (async () => {
     try {
-        const result = await resolveDns(parsed.host);
-        console.log(result);
+        if (!input) throw new Error("No input provided");
+
+        const parsed = parseInput(input);
+
+        const dnsResult = await resolveDns(parsed.host);
+        console.log("DNS:", dnsResult);
+
+        const ips = [...dnsResult.ipv4, ...dnsResult.ipv6];
+
+        if (ips.length === 0) {
+            throw new Error("No IPs resolved");
+        }
+
+        // Try connections sequentially (safer than blasting all)
+        for (const ip of ips) {
+            try {
+                const result = await tcpConnect(ip, parsed.port);
+                console.log("TCP Success:", result);
+                return;
+            } catch (err) {
+                console.log(err.message);
+            }
+        }
+
+        throw new Error("All TCP attempts failed");
+
     } catch (err) {
-        console.error(err);
+        console.error("Error:", err.message);
     }
 })();
