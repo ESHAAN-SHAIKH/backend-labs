@@ -9,18 +9,33 @@ function generateETag(data){
 const hash=crypto.createHash('sha1').update(JSON.stringify(data)).digest('hex');
 return '${hash}';
 }
-function sendResponse(res,req,{status=200,headers={},body=null}) {
-    const baseHeaders={
-        "Content-Type":"application/json",
-        "X-Request-Id":req.id,
-        ...headers
-    };
-    res.writeHead(status,baseHeaders);
-    if(status==204||status==304){
-       return res.end();
-    }
-    res.end(body?JSON.stringify(body):null);
+
+
+function sendJson(res, status, data, headers = {}) {
+  const body = data ? JSON.stringify(data) : '';
+
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    ...headers
+  });
+
+  res.end(body);
 }
+
+function sendEmpty(res, status, headers = {}) {
+  res.writeHead(status, headers);
+  res.end();
+}
+
+function parseBody(req){
+    return new Promise((resolve,reject)=>{
+        let body="";
+        req.on('data',chunk=>{
+            
+        })
+    })
+}
+
 
 
 const server = http.createServer((req,res)=>{
