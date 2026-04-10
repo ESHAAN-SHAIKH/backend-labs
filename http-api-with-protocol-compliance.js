@@ -52,7 +52,30 @@ function parseBody(req) {
     });
   });
 }
+// Validation
+function validatePost(data, partial = false) {
+  const errors = {};
 
+  if (!partial || 'title' in data) {
+    if (!data.title || data.title.trim() === '') {
+      errors.title = 'Title is required';
+    }
+  }
+
+  if (!partial || 'content' in data) {
+    if (!data.content || data.content.trim() === '') {
+      errors.content = 'Content is required';
+    }
+  }
+
+  if (!partial || 'author' in data) {
+    if (!data.author || data.author.trim() === '') {
+      errors.author = 'Author is required';
+    }
+  }
+
+  return Object.keys(errors).length ? errors : null;
+}
 
 
 const server = http.createServer((req,res)=>{
