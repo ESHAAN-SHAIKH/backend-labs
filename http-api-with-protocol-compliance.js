@@ -27,13 +27,30 @@ function sendEmpty(res, status, headers = {}) {
   res.end();
 }
 
-function parseBody(req){
-    return new Promise((resolve,reject)=>{
-        let body="";
-        req.on('data',chunk=>{
-            
-        })
-    })
+function parseBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+
+    req.on('data', chunk => {
+      body += chunk;
+    });
+
+    req.on('end', () => {
+      const contentType = req.headers['content-type'] || '';
+
+      try {
+        if (contentType.includes('application/json')) {
+          resolve(body ? JSON.parse(body) : {});
+        } else if (contentType.includes('application/x-www-form-urlencoded')) {
+          resolve(querystring.parse(body));
+        } else {
+          resolve({});
+        }
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
 }
 
 
