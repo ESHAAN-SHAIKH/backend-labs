@@ -17,6 +17,16 @@ function validatePost(data) {
   );
 }
 
+function getSessionId(req) {
+  const cookieHeader = req.headers.cookie || '';
+
+  return cookieHeader
+    .split(';')
+    .map(cookie => cookie.trim())
+    .find(cookie => cookie.startsWith('session='))
+    ?.split('=')[1];
+}
+
 async function hashPassword(password) {
   return bcrypt.hash(password, saltRounds);
 }
@@ -24,9 +34,11 @@ async function hashPassword(password) {
 function generateId() {
   return crypto.randomUUID();
 }
+
 function generateSessionId() {
   return crypto.randomBytes(32).toString('hex');
 }
+
 function parseRequestBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -69,7 +81,43 @@ async function initializeAdmin() {
     role: 'admin'
   });
 }
+function getAuthenticatedUser(req) {
+  const sessionId = getSessionId(req);
+  const session = sessions.get(sessionId);
 
+  if (!session) {
+    return null;
+  }
+
+  return users.get(session.userId) || null;
+}
+
+function requireRole(role) {
+  return req => {
+    const user = getAuthenticatedUser(req);
+
+    if (!user) {
+      return {
+        status: 401,
+        error: 'Unauthorized'
+      };
+    }
+
+    if (user.role !== role) {
+      return {
+        status: 403,
+        error: 'Forbidden'
+      };
+    }
+
+    return {
+      status: 200,
+      user
+    };
+  };
+}
+
+const requireAdmin = requireRole('admin');
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname;
@@ -153,72 +201,186 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (method === 'POST' && path === '/login'){
-    
-    try{
-     const body= parseRequestBody(req);
-    }catch(err){
-      res.writeHead(401,{'Content-Type':'application/json'});
-      res.end(JSON.stringify({
-        error:"Invalid JSON"
-      }));
+  if (method === 'POST' && path === '/login') {
+    let body;
+
+    try {
+      body = await parseRequestBody(req);
+    } catch (err) {
+      res.writeHead(400, {
+        'Content-Type': 'application/json'
+      });
+
+      res.end(
+        JSON.stringify({
+          error: 'Invalid JSON'
+        })
+      );
+
       return;
     }
+
     const existingUser = [...users.values()].find(
-      user=>user.username===body.username
+      user => user.username === body.username
     );
-    if(!existingUser){
-      res.writeHead(401,{'Content-Type':'application/json'});
-      res.end(JSON.stringify({
-        error:"Username or password doesn't exist"}
-      ))
-      return;
-    }
-    const isMatch= await bcrypt.compare(body.password, existingUser.passwordHash);
-    if(!isMatch){
-      res.writeHead(401,{'Content-Type':'application/json'});
-      res.end(JSON.stringify({
-        error:"Username or password doesn't exist"}
-      ))
-      return;
-    }
-    
-      const sessionId= generateSessionId();
 
-      
-      sessions.set(sessionId,{id:existingUser.id,
-        createdAt: new Date().toISOString()
+    if (!existingUser) {
+      res.writeHead(401, {
+        'Content-Type': 'application/json'
+      });
+
+      res.end(
+        JSON.stringify({
+          error: 'Invalid username or password'
+        })
+      );
+
+      return;
+    }
+
+    const isMatch = await bcrypt.compare(
+      body.password,
+      existingUser.passwordHash
+    );
+
+    if (!isMatch) {
+      res.writeHead(401, {
+        'Content-Type': 'application/json'
+      });
+
+      res.end(
+        JSON.stringify({
+          error: 'Invalid username or password'
+        })
+      );
+
+      return;
+    }
+
+    const sessionId = generateSessionId();
+
+    sessions.set(sessionId, {
+      userId: existingUser.id,
+      createdAt: new Date().toISOString()
+    });
+
+    res.setHeader('Set-Cookie', `session=${sessionId};HttpOnly; Secure; SameSite=Strict; Max-Age=86400`);
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json'
+    });
+
+    res.end(
+      JSON.stringify({
+        message: 'Logged in',
+        username: existingUser.username
       })
+    );
 
-      res.setHeader('Set-Cookie',sessionId=`${sessionId}`);
-      res.writeHead(200,{
+    return;
+  }
+
+  if (method === 'GET' && path === '/me') {
+    const sessionId = getSessionId(req);
+    const session = sessions.get(sessionId);
+
+    if (!session) {
+      res.writeHead(401, {
+        'Content-Type': 'application/json'
+      });
+
+      res.end(
+        JSON.stringify({
+          error: 'Unauthorized'
+        })
+      );
+
+      return;
+    }
+
+    const user = users.get(session.userId);
+
+    if (!user) {
+      res.writeHead(401, {
+        'Content-Type': 'application/json'
+      });
+
+      res.end(
+        JSON.stringify({
+          error: 'Unauthorized'
+        })
+      );
+
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json'
+    });
+
+    res.end(
+      JSON.stringify({
+        id: user.id,
+        username: user.username,
+        role: user.role
+      })
+    );
+
+    return;
+  }
+
+  if (method === 'POST' && path === '/logout') {
+    const sessionId = getSessionId(req);
+
+    if (sessionId) {
+      sessions.delete(sessionId);
+    }
+     res.setHeader('Set-Cookie','session=;HttpOnly;SameSite=Strict; Max-Age=0')
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json'
+    });
+    
+
+    res.end(
+      JSON.stringify({
+        message: 'Logged out'
+      })
+    );
+
+    return;
+  }
+  if (method === 'GET' && path === '/admin') {
+  const auth = requireAdmin(req);
+
+  if (auth.status !== 200) {
+    res.writeHead(auth.status, {
+      'Content-Type': 'application/json'
+    });
+
+    res.end(
+      JSON.stringify({
+        error: auth.error
+      })
+    );
+
+    return;
+  }
+
+  const userList = [...users.values()].map(user => ({
+    id: user.id,
+    username: user.username,
+    role: user.role
+  }));
+
+  res.writeHead(200, {
     'Content-Type': 'application/json'
   });
-  res.end(JSON.stringify({
-    message: "Logged in", 
-    username:existingUser.username
-  }));
+
+  res.end(JSON.stringify(userList));
+
   return;
-    
-
-  }
-  if(method==='GET'&& path==='/me'){
-    const cookieHeader = req.headers.cookie ||'';
-    const sessionId=cookieHeader.split(',').map(cookie=>cookie.trim()).find(cookie=>cookie.startsWith("sessionId="))?.split("=")[1];
-    const session=sessionId?sessions.get(sessionId):null;
-    if(!session){
-      res.writeHead(401,{'Content-Type':'application/json'});
-      res.end();
-      return;
-    }
-    const { id, username, role } = session;
-    res.writeHead(200,{'Content-Type':'application/json'});
-    res.end(JSON.stringify({
-      id, username, role
-    }))
-
-
-  }
+}
 
   res.writeHead(404, {
     'Content-Type': 'application/json'
