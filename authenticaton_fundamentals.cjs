@@ -6,6 +6,7 @@ const { URL } = require('url');
 
 const saltRounds = 12;
 const users = new Map();
+const sessions = new Map();
 
 function validatePost(data) {
   return (
@@ -23,7 +24,9 @@ async function hashPassword(password) {
 function generateId() {
   return crypto.randomUUID();
 }
-
+function generateSessionId() {
+  return crypto.randomBytes(32).toString('hex');
+}
 function parseRequestBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -148,6 +151,73 @@ const server = http.createServer(async (req, res) => {
     );
 
     return;
+  }
+
+  if (method === 'POST' && path === '/login'){
+    
+    try{
+     const body= parseRequestBody(req);
+    }catch(err){
+      res.writeHead(401,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({
+        error:"Invalid JSON"
+      }));
+      return;
+    }
+    const existingUser = [...users.values()].find(
+      user=>user.username===body.username
+    );
+    if(!existingUser){
+      res.writeHead(401,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({
+        error:"Username or password doesn't exist"}
+      ))
+      return;
+    }
+    const isMatch= await bcrypt.compare(body.password, existingUser.passwordHash);
+    if(!isMatch){
+      res.writeHead(401,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({
+        error:"Username or password doesn't exist"}
+      ))
+      return;
+    }
+    
+      const sessionId= generateSessionId();
+
+      
+      sessions.set(sessionId,{id:existingUser.id,
+        createdAt: new Date().toISOString()
+      })
+
+      res.setHeader('Set-Cookie',sessionId=`${sessionId}`);
+      res.writeHead(200,{
+    'Content-Type': 'application/json'
+  });
+  res.end(JSON.stringify({
+    message: "Logged in", 
+    username:existingUser.username
+  }));
+  return;
+    
+
+  }
+  if(method==='GET'&& path==='/me'){
+    const cookieHeader = req.headers.cookie ||'';
+    const sessionId=cookieHeader.split(',').map(cookie=>cookie.trim()).find(cookie=>cookie.startsWith("sessionId="))?.split("=")[1];
+    const session=sessionId?sessions.get(sessionId):null;
+    if(!session){
+      res.writeHead(401,{'Content-Type':'application/json'});
+      res.end();
+      return;
+    }
+    const { id, username, role } = session;
+    res.writeHead(200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify({
+      id, username, role
+    }))
+
+
   }
 
   res.writeHead(404, {
